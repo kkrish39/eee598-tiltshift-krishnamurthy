@@ -11,6 +11,25 @@ public class SpeedyTiltShift {
     }
 
 
+    public static void constructGaussianKernel(float radius, float sigma){
+        int kernelSize = (int)(Math.ceil(radius)*2) + 1;
+
+        double[] kernelMatrix = new double[kernelSize];
+
+        int wholeRadius = (int)Math.ceil(radius);
+        double sigmaSquare = sigma * sigma;
+        double twoPiSigmaSquare = 2 * Math.PI * sigmaSquare;
+        double sqrtTwoPiSigmaSquare = Math.sqrt(twoPiSigmaSquare);
+
+        double firstTerm = 1/(sqrtTwoPiSigmaSquare);
+
+
+        for(int i=-wholeRadius ;i<=wholeRadius;i++){
+            double secondTerm = -1* i*i/(2*sigmaSquare);
+            double val = Math.exp(secondTerm)*firstTerm;
+            kernelMatrix[i+wholeRadius] = val;
+        }
+    }
     public static Bitmap tiltshift_java(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
         //cannot write to input Bitmap, since it may be immutable
@@ -19,6 +38,8 @@ public class SpeedyTiltShift {
         int[] pixels = new int[input.getHeight()*input.getWidth()];
         int[] pixelsOut = new int[input.getHeight()*input.getWidth()];
         input.getPixels(pixels,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+        constructGaussianKernel(2,1);
+
         for (int i=0; i<input.getWidth()*input.getHeight(); i++){
             int B = pixels[i]%0x100;
             int G = (pixels[i]>>8)%0x100;

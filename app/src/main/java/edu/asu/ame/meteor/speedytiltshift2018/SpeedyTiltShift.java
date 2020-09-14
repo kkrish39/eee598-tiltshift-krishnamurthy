@@ -11,10 +11,10 @@ public class SpeedyTiltShift {
     }
 
 
-    public static void constructGaussianKernel(float radius, float sigma){
+    public static double[] constructGaussianKernel(float radius, float sigma){
         int kernelSize = (int)(Math.ceil(radius)*2) + 1;
 
-        double[] kernelMatrix = new double[kernelSize];
+        double[] kernelVector = new double[kernelSize];
 
         int wholeRadius = (int)Math.ceil(radius);
         double sigmaSquare = sigma * sigma;
@@ -26,9 +26,12 @@ public class SpeedyTiltShift {
 
         for(int i=-wholeRadius ;i<=wholeRadius;i++){
             double secondTerm = -1* i*i/(2*sigmaSquare);
-            double val = Math.exp(secondTerm)*firstTerm;
-            kernelMatrix[i+wholeRadius] = val;
+            double weight = Math.exp(secondTerm)*firstTerm;
+
+            kernelVector[i+wholeRadius] = weight;
         }
+
+        return kernelVector;
     }
     public static Bitmap tiltshift_java(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
@@ -36,23 +39,90 @@ public class SpeedyTiltShift {
         //if you try, you may get a java.lang.IllegalStateException
 
         int[] pixels = new int[input.getHeight()*input.getWidth()];
+        int[] pixelsIntermediate  = new int[input.getHeight()*input.getWidth()];
         int[] pixelsOut = new int[input.getHeight()*input.getWidth()];
         input.getPixels(pixels,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
-        constructGaussianKernel(2,1);
 
-        for (int i=0; i<input.getWidth()*input.getHeight(); i++){
-            int B = pixels[i]%0x100;
-            int G = (pixels[i]>>8)%0x100;
-            int R = (pixels[i]>>16)%0x100;
-            int A = 0xff;
+        double[] gaussianKernelVector = constructGaussianKernel(2,0.8F);
 
-            G=0; //Temporary: set all green values to 0 as a demo.
+        int imageWidth = input.getWidth();
+        int imageHeight = input.getHeight();
+        int totalPixels = input.getWidth()*input.getHeight();
+        int gaussianVectorLength = gaussianKernelVector.length;
 
-            int color = (A & 0xff) << 24 | (R & 0xff) << 16 | (G & 0xff) << 8 | (B & 0xff);
-            pixelsOut[i]=color;
+        System.out.println("Image Width and Height "+ imageWidth +"   "+imageHeight);
+        for (int i=0; i<imageHeight; i++){
+            int pixelLeft = i*imageWidth;
+            int pixelRight = pixelLeft + imageWidth-1;
+
+
+            for(int j=pixelLeft; j<pixelRight && j < totalPixels; j++) {
+                int color = 0;
+                float bluePixel = 0, greenPixel = 0, redPixel = 0;
+//                System.out.println("Pixel to be mainpulated ---->" + pixels[j]);
+                for(int k=j-2;k<=j+2;k++) {
+                    if(k < 0 || k > pixelRight-1 || k > totalPixels) continue;
+                    int B = pixels[k] % 0x100;
+                    int G = (pixels[k] >> 8) % 0x100;
+                    int R = (pixels[k] >> 16) % 0x100;
+                    int A = 0xff;
+
+//                    A += (int)(gaussianKernelVector[k % gaussianVectorLength] * A);
+                    redPixel += gaussianKernelVector[k % gaussianVectorLength] * ((R >> 16)& 0xff);
+                    greenPixel += gaussianKernelVector[k % gaussianVectorLength] * ((G >> 8)& 0xff);
+                    bluePixel += (gaussianKernelVector[k % gaussianVectorLength] * (B & 0xff));
+                }
+
+                int ap = 0xff;
+                int rp = (int) redPixel;
+                int gp = (int) greenPixel;
+                int bp = (int) bluePixel;
+//                System.out.println(rp +"   "+gp+"    "+bp);
+                color = (ap  << 24) | (rp << 16) | (gp << 8) | bp;
+                pixelsIntermediate[j] = (int)color;
+//                System.out.println(pixelsIntermediate[j]);
+            }
+
+
         }
-        outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+        outBmp.setPixels(pixelsIntermediate,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
+//        for (int i=0; i<imageWidth; i++){
+//            int pixelTop = i*imageHeight;
+//
+//
+//            for(int j=pixelTop; j < totalPixels; j=j+imageWidth) {
+//                int color = 0;
+//                float bluePixel = 0, greenPixel = 0, redPixel = 0;
+////                System.out.println("Pixel to be mainpulated ---->" + pixels[j]);
+//                for(int k=j-2;k<=j+2;k++) {
+//                    if(k < pixelTop || k > pixelBottom-1) continue;
+//                    int B = pixelsIntermediate[k] % 0x100;
+//                    int G = (pixelsIntermediate[k] >> 8) % 0x100;
+//                    int R = (pixelsIntermediate[k] >> 16) % 0x100;
+//                    int A = 0xff;
+//
+////                    A += (int)(gaussianKernelVector[k % gaussianVectorLength] * A);
+//                    redPixel += gaussianKernelVector[k % gaussianVectorLength] * ((R >> 16)& 0xff);
+//                    greenPixel += gaussianKernelVector[k % gaussianVectorLength] * ((G >> 8)& 0xff);
+//                    bluePixel += (gaussianKernelVector[k % gaussianVectorLength] * (B & 0xff));
+//                }
+//
+//                int ap = 0xff;
+//                int rp = (int) redPixel;
+//                int gp = (int) greenPixel;
+//                int bp = (int) bluePixel;
+////                System.out.println(rp +"   "+gp+"    "+bp);
+//                color = (ap  << 24) | (rp << 16) | (gp << 8) | bp;
+//                pixelsOut[j] = (int)color;
+////                System.out.println(pixelsIntermediate[j]);
+//            }
+//
+//
+//        }
+//        outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+//
+//        System.out.println("Someting");
         return outBmp;
     }
     public static Bitmap tiltshift_cpp(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){

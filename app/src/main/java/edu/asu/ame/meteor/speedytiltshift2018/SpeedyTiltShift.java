@@ -11,7 +11,7 @@ public class SpeedyTiltShift {
     }
 
 
-    public static double[] constructGaussianKernel(float radius, float sigma){
+    private static double[] constructGaussianKernel(float radius, float sigma){
         int kernelSize = (int)(Math.ceil(radius)*2) + 1;
 
         double[] kernelVector = new double[kernelSize];
@@ -33,6 +33,7 @@ public class SpeedyTiltShift {
 
         return kernelVector;
     }
+
     public static Bitmap tiltshift_java(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
         //cannot write to input Bitmap, since it may be immutable
@@ -42,10 +43,12 @@ public class SpeedyTiltShift {
         int[] pixels = new int[input.getHeight()*input.getWidth()];
         int[] pixelsIntermediate  = new int[input.getHeight()*input.getWidth()];
         int[] pixelsOut = new int[input.getHeight()*input.getWidth()];
+
+
         input.getPixels(pixels,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
 
-        float sigma = 3F;
+        float sigma = .5F;
         double radius = Math.ceil(2*sigma);
         int r = (int)radius;
         System.out.println("Radius  " + r);
@@ -78,24 +81,25 @@ public class SpeedyTiltShift {
                     int B = px % 0xff;
                     int G = (px >> 8) % 0xff;
                     int R = (px >> 16) % 0xff;
-                    int A = (px >> 24) % 0xff;
+//                    int A = (px >> 24) % 0xff;
 
                     redPixel += (gaussianKernelVector[count] * R );
                     greenPixel += (gaussianKernelVector[count] * G );
                     bluePixel += (gaussianKernelVector[count] * B );
-                    alphaPixel += (gaussianKernelVector[count] * A);
+//                    alphaPixel += (gaussianKernelVector[count] * A);
                 }
 
-                int ap = (int) alphaPixel;
+                int ap = 0xff;
                 int rp = (int) redPixel;
                 int gp = (int) greenPixel;
                 int bp = (int) bluePixel;
 
-                color = (ap  << 24) | (rp << 16) | (gp << 8) | bp;
+//                color = (ap  << 24) | (rp << 16) | (gp << 8) | bp;
+                color = (ap & 0xff) << 24 | (rp & 0xff) << 16 | (gp & 0xff) << 8 | (bp & 0xff);
                 pixelsIntermediate[j] = (int) color;
             }
         }
-//
+
         for (int i=0; i<imageHeight; i++){
             int pixelLeft = i*imageWidth;
             int pixelRight = pixelLeft + imageWidth-1;
@@ -105,34 +109,35 @@ public class SpeedyTiltShift {
                 float bluePixel = 0, greenPixel = 0, redPixel = 0, alphaPixel = 0;
                 int px;
                 for(int k=-r;k<=r;k++) {
-                    if(k < 0 || k > pixelRight-1 || k > totalPixels){
+                    int pxl = j+k;
+                    if(pxl < 0 || pxl > pixelRight-1 || pxl > totalPixels){
                         px = 1;
                     }else{
-                        px = pixelsIntermediate[k];
+                        px = pixelsIntermediate[pxl];
                     }
                     int B = px % 0xff;
                     int G = (px >> 8) % 0xff;
                     int R = (px >> 16) % 0xff;
-                    int A = (px >> 24) % 0xff;
+//                    int A = (px >> 24) % 0xff;
 
                     redPixel += (gaussianKernelVector[k + r] * R);
                     greenPixel += (gaussianKernelVector[k + r] * G);
                     bluePixel += (gaussianKernelVector[k +r] * B);
-                    alphaPixel += (gaussianKernelVector[k + r] * A);
+//                    alphaPixel += (gaussianKernelVector[k + r] * A);
                 }
 
-                int ap = (int) alphaPixel;
+                int ap = 0xff;
                 int rp = (int) redPixel;
                 int gp = (int) greenPixel;
                 int bp = (int) bluePixel;
 
-                color = (ap  << 24) | (rp << 16) | (gp << 8) | bp;
+                color = (ap & 0xff) << 24 | (rp & 0xff) << 16 | (gp & 0xff) << 8 | (bp & 0xff);
                 pixelsOut[j] = (int)color;
 
             }
         }
 
-        outBmp.setPixels(pixelsIntermediate,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+        outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
         System.out.println("Something");
         return outBmp;

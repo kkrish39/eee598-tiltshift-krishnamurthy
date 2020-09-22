@@ -2,6 +2,10 @@ package edu.asu.ame.meteor.speedytiltshift2018;
 
 import android.graphics.Bitmap;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 public class SpeedyTiltShift {
     static SpeedyTiltShift Singleton = new SpeedyTiltShift();
 
@@ -11,9 +15,11 @@ public class SpeedyTiltShift {
     }
 
 
-    private static double[] constructGaussianKernel(float radius, float sigma){
-        int kernelSize = (int)(Math.ceil(radius)*2) + 1;
+    private static double[] constructGaussianKernel(double sigma){
+        double radius = Math.ceil(2*sigma);
 
+        int kernelSize = (int)(Math.ceil(radius)*2) + 1;
+//        System.out.println("Kernel Size ---> "+"  "+radius+"  "+ sigma +"  "+kernelSize);
         double[] kernelVector = new double[kernelSize];
 
         int wholeRadius = (int)Math.ceil(radius);
@@ -34,112 +40,227 @@ public class SpeedyTiltShift {
         return kernelVector;
     }
 
+    private static double calculateSigma(int low, int high, int y, float sigma, boolean isFarSigma){
+        double calculatedSigma = sigma * (isFarSigma ? (high - y) : (y - low))/(high - low);
+
+        return calculatedSigma < 0.6 ? sigma : calculatedSigma;
+    }
+
+    private static void performVerticalConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, double[][] gaussianKernelVectors){
+        for (int i=top; i<top+width; i++){
+            for(int j = i; j < bottom; j=j+width) {
+                float bluePixel = 0;
+                float greenPixel = 0;
+                float redPixel = 0;
+
+                int count = -1;
+                int pixelVal;
+                double[] gaussianKernelVector = gaussianKernelVectors[j/width];
+                int radius = gaussianKernelVector.length/2;
+                for(int k = j - (radius * width); k <= j + (radius * width); k = k + width) {
+                    count++;
+                    // TODO: Must check the time taken to process
+                    try{
+                        pixelVal = pixelsIn[k];
+                    }catch (ArrayIndexOutOfBoundsException a){
+                        pixelVal = 1;
+                    }
+
+                    int blue = pixelVal & 0xff;
+                    int green = (pixelVal >> 8) & 0xff;
+                    int red = (pixelVal >> 16) & 0xff;
+
+
+                    redPixel += (gaussianKernelVector[count] * red );
+                    greenPixel += (gaussianKernelVector[count] * green );
+                    bluePixel += (gaussianKernelVector[count] * blue );
+
+                }
+
+                int combinedAlpha = 0xff;
+                int combinedRed = (int) redPixel;
+                int combinedGreen = (int) greenPixel;
+                int combinedBlue = (int) bluePixel;
+
+                pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
+            }
+        }
+    }
+    private static void performHorizontalConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, double[][] gaussianKernelVectors){
+        for(int i=top;i<bottom+width;i=i+width){
+            int pixelRight = i + width - 1;
+
+            double[] gaussianKernelVector = gaussianKernelVectors[i/width];
+            int radius = gaussianKernelVector.length/2;
+
+            for(int j = i; j< pixelRight; j++) {
+                float bluePixel = 0;
+                float greenPixel = 0;
+                float redPixel = 0;
+
+                int pixelVal;
+
+                for(int k = -radius; k <= radius; k++) {
+                    int pixelIndex = j + k;
+                    int vectorIndex = k + radius;
+
+                    // TODO: Must check the time taken to process
+                    if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
+                        pixelVal = pixelsIn[pixelIndex];
+                    }else{
+                        pixelVal = 0;
+                    }
+
+                    int blue = pixelVal & 0xff;
+                    int green = (pixelVal >> 8) & 0xff;
+                    int red = (pixelVal >> 16) & 0xff;
+
+                    redPixel += (gaussianKernelVector[vectorIndex] * red);
+                    greenPixel += (gaussianKernelVector[vectorIndex] * green);
+                    bluePixel += (gaussianKernelVector[vectorIndex] * blue);
+                }
+
+                int combinedAlpha = 0xff;
+                int combinedRed = (int) redPixel;
+                int combinedGreen = (int) greenPixel;
+                int combinedBlue = (int) bluePixel;
+
+                pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
+            }
+        }
+    }
+    private static void performVerticalConvolutionWithGivenSigma(int top, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
+        for (int i=top; i<top+width; i++){
+            for(int j = i; j < totalPixels; j=j+width) {
+                float bluePixel = 0;
+                float greenPixel = 0;
+                float redPixel = 0;
+
+                int count = -1;
+                int pixelVal;
+
+                int rangeToBeConvoluted = radius * width;
+                for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
+                    count++;
+                    // TODO: Must check the time taken to process
+                    try{
+                        pixelVal = pixelsIn[k];
+                    }catch (ArrayIndexOutOfBoundsException a){
+                        pixelVal = 0;
+                    }
+
+                    int blue = pixelVal & 0xff;
+                    int green = (pixelVal >> 8) & 0xff;
+                    int red = (pixelVal >> 16) & 0xff;
+
+
+                    redPixel += (gaussianKernelVector[count] * red );
+                    greenPixel += (gaussianKernelVector[count] * green );
+                    bluePixel += (gaussianKernelVector[count] * blue );
+                }
+
+                int combinedAlpha = 0xff;
+                int combinedRed = (int) redPixel;
+                int combinedGreen = (int) greenPixel;
+                int combinedBlue = (int) bluePixel;
+
+                pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
+            }
+        }
+    }
+    private static void performHorizontalConvolutionWithGivenSigma(int top, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
+        for(int i=top;i<totalPixels;i=i+width){
+            int pixelRight = i + width;
+            for(int j = i; j < pixelRight; j++) {
+                float bluePixel = 0;
+                float greenPixel = 0;
+                float redPixel = 0;
+
+                int pixelVal;
+
+                for(int k = -radius; k <= radius; k++) {
+                    int pixelIndex = j + k;
+                    int vectorIndex = k + radius;
+
+                    // TODO: Must check the time taken to process
+                    if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
+                        pixelVal = pixelsIn[pixelIndex];
+                    }else{
+                        pixelVal = 0;
+                    }
+
+                    int blue = pixelVal & 0xff;
+                    int green = (pixelVal >> 8) & 0xff;
+                    int red = (pixelVal >> 16) & 0xff;
+
+                    redPixel += (gaussianKernelVector[vectorIndex] * red);
+                    greenPixel += (gaussianKernelVector[vectorIndex] * green);
+                    bluePixel += (gaussianKernelVector[vectorIndex] * blue);
+                }
+
+                int combinedAlpha = 0xff;
+                int combinedRed = (int) redPixel;
+                int combinedGreen = (int) greenPixel;
+                int combinedBlue = (int) bluePixel;
+                pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
+            }
+        }
+    }
+
+
+    private static void performConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsIntermediate, int[] pixelsOut, int height, int width, int totalPixels, float sigma, boolean isSigmaFar, boolean singleSigma){
+        if(singleSigma){
+            double[] gaussianKernelVector = constructGaussianKernel(sigma);
+            performVerticalConvolutionWithGivenSigma(top, pixelsIn, pixelsIntermediate, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
+            performHorizontalConvolutionWithGivenSigma(top, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
+        }else {
+            double[][] gaussianKernelVector = new double[height][];
+
+            int lowIndex = top/width;
+            int highIndex = bottom/width;
+            for(int i=lowIndex;i<highIndex;i++){
+                gaussianKernelVector[i] = constructGaussianKernel(calculateSigma(lowIndex,highIndex,i,sigma,isSigmaFar));
+            }
+
+            performVerticalConvolution(top, bottom, pixelsIn, pixelsIntermediate,width,gaussianKernelVector);
+            performHorizontalConvolution(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector);
+        }
+    }
     public static Bitmap tiltshift_java(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
-        //cannot write to input Bitmap, since it may be immutable
-        //if you try, you may get a java.lang.IllegalStateException
-        System.out.println(sigma_far+ " "+sigma_near+" "+a0 + " "+a1+ " "+a2+ " "+a3);
 
-        int[] pixels = new int[input.getHeight()*input.getWidth()];
-        int[] pixelsIntermediate  = new int[input.getHeight()*input.getWidth()];
-        int[] pixelsOut = new int[input.getHeight()*input.getWidth()];
-
-
-        input.getPixels(pixels,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
-
-
-        float sigma = .5F;
-        double radius = Math.ceil(2*sigma);
-        int r = (int)radius;
-        System.out.println("Radius  " + r);
-        double[] gaussianKernelVector = constructGaussianKernel(r,sigma);
-
+        /* Image dimensions */
         int imageWidth = input.getWidth();
         int imageHeight = input.getHeight();
         int totalPixels = input.getWidth()*input.getHeight();
-        int gaussianVectorLength = gaussianKernelVector.length;
 
-        System.out.println("Image Width and Height "+ imageWidth +"   "+imageHeight +" "+gaussianKernelVector.length);
+        int[] pixelsIn = new int[totalPixels];
+        int[] pixelsIntermediate  = new int[totalPixels];
+        int[] pixelsOut = new int[totalPixels];
 
-        for(double x: gaussianKernelVector){
-            System.out.print(x+" ");
+        System.out.println(a0+"  "+a1+"  "+a2+"   "+a3+" "+sigma_far+"  "+sigma_near);
+
+        input.getPixels(pixelsIn,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+
+        performConvolution(0,(a0-1)*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, true);
+        System.out.println("**** Finished Processing First Part ****");
+
+        performConvolution(a0*imageWidth,a1*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, false);
+        System.out.println("**** Finished Processing Second Part ****");
+
+        for(int i=(a1+1)*imageWidth; i<(a2-1)*imageWidth; i++){
+            pixelsOut[i] = pixelsIn[i];
         }
+        System.out.println("**** Finished Processing Third Part ****");
 
-        for (int i=0; i<imageWidth; i++){
-            for(int j = i; j < totalPixels; j=j+imageWidth) {
-                int color = 0;
-                float bluePixel = 0, greenPixel = 0, redPixel = 0, alphaPixel = 0;
-                int count = -1;
-                int px;
-                for(int k = j - (r * imageWidth); k <= j + (r * imageWidth); k = k + imageWidth) {
-                    count++;
-                    if(k < i || k > totalPixels -1) {
-                        px = 1;
-                    }else{
-                        px = pixels[k];
-                    }
-                    int B = px % 0xff;
-                    int G = (px >> 8) % 0xff;
-                    int R = (px >> 16) % 0xff;
-//                    int A = (px >> 24) % 0xff;
+        performConvolution(a2*imageWidth,a3*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, false);
+        System.out.println("**** Finished PRocessing Fourth Part ****");
 
-                    redPixel += (gaussianKernelVector[count] * R );
-                    greenPixel += (gaussianKernelVector[count] * G );
-                    bluePixel += (gaussianKernelVector[count] * B );
-//                    alphaPixel += (gaussianKernelVector[count] * A);
-                }
-
-                int ap = 0xff;
-                int rp = (int) redPixel;
-                int gp = (int) greenPixel;
-                int bp = (int) bluePixel;
-
-//                color = (ap  << 24) | (rp << 16) | (gp << 8) | bp;
-                color = (ap & 0xff) << 24 | (rp & 0xff) << 16 | (gp & 0xff) << 8 | (bp & 0xff);
-                pixelsIntermediate[j] = (int) color;
-            }
-        }
-
-        for (int i=0; i<imageHeight; i++){
-            int pixelLeft = i*imageWidth;
-            int pixelRight = pixelLeft + imageWidth-1;
-
-            for(int j=pixelLeft; j<pixelRight && j < totalPixels; j++) {
-                int color = 0;
-                float bluePixel = 0, greenPixel = 0, redPixel = 0, alphaPixel = 0;
-                int px;
-                for(int k=-r;k<=r;k++) {
-                    int pxl = j+k;
-                    if(pxl < 0 || pxl > pixelRight-1 || pxl > totalPixels){
-                        px = 1;
-                    }else{
-                        px = pixelsIntermediate[pxl];
-                    }
-                    int B = px % 0xff;
-                    int G = (px >> 8) % 0xff;
-                    int R = (px >> 16) % 0xff;
-//                    int A = (px >> 24) % 0xff;
-
-                    redPixel += (gaussianKernelVector[k + r] * R);
-                    greenPixel += (gaussianKernelVector[k + r] * G);
-                    bluePixel += (gaussianKernelVector[k +r] * B);
-//                    alphaPixel += (gaussianKernelVector[k + r] * A);
-                }
-
-                int ap = 0xff;
-                int rp = (int) redPixel;
-                int gp = (int) greenPixel;
-                int bp = (int) bluePixel;
-
-                color = (ap & 0xff) << 24 | (rp & 0xff) << 16 | (gp & 0xff) << 8 | (bp & 0xff);
-                pixelsOut[j] = (int)color;
-
-            }
-        }
+        performConvolution((a3+1)*imageWidth,imageHeight-2,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, true);
+        System.out.println("--------- Processing Done ------------");
 
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
-        System.out.println("Something");
         return outBmp;
     }
     public static Bitmap tiltshift_cpp(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){

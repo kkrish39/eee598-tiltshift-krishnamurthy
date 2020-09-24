@@ -2,24 +2,25 @@ package edu.asu.ame.meteor.speedytiltshift2018;
 
 import android.graphics.Bitmap;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class SpeedyTiltShift {
     static SpeedyTiltShift Singleton = new SpeedyTiltShift();
 
-    // Used to load the 'native-lib' library on application startup.
+    private static final Logger logger = Logger.getLogger(String.valueOf(SpeedyTiltShift.class));
+
     static {
         System.loadLibrary("native-lib");
     }
 
 
     private static double[] constructGaussianKernel(double sigma){
+        if(sigma < 0.6)
+            return new double[0];
         double radius = Math.ceil(2*sigma);
 
         int kernelSize = (int)(Math.ceil(radius)*2) + 1;
-//        System.out.println("Kernel Size ---> "+"  "+radius+"  "+ sigma +"  "+kernelSize);
         double[] kernelVector = new double[kernelSize];
 
         int wholeRadius = (int)Math.ceil(radius);
@@ -28,7 +29,6 @@ public class SpeedyTiltShift {
         double sqrtTwoPiSigmaSquare = Math.sqrt(twoPiSigmaSquare);
 
         double firstTerm = 1/(sqrtTwoPiSigmaSquare);
-
 
         for(int k=-wholeRadius ;k<=wholeRadius;k++){
             double secondTerm = -1* k*k/(2*sigmaSquare);
@@ -41,13 +41,11 @@ public class SpeedyTiltShift {
     }
 
     private static double calculateSigma(int low, int high, int y, float sigma, boolean isFarSigma){
-        double calculatedSigma = sigma * (isFarSigma ? (high - y) : (y - low))/(high - low);
-
-        return calculatedSigma < 0.6 ? sigma : calculatedSigma;
+        return  sigma * (isFarSigma ? (high - y) : (y - low))/(high - low);
     }
 
     private static void performVerticalConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, double[][] gaussianKernelVectors){
-        for (int i=top; i<top+width; i++){
+        for (int i=top; i<=top+width; i++){
             for(int j = i; j < bottom; j=j+width) {
                 float bluePixel = 0;
                 float greenPixel = 0;
@@ -55,15 +53,22 @@ public class SpeedyTiltShift {
 
                 int count = -1;
                 int pixelVal;
+
                 double[] gaussianKernelVector = gaussianKernelVectors[j/width];
+
+                if(gaussianKernelVector == null || gaussianKernelVector.length == 0){
+                    pixelsOut[j] = pixelsIn[j];
+                    continue;
+                }
                 int radius = gaussianKernelVector.length/2;
-                for(int k = j - (radius * width); k <= j + (radius * width); k = k + width) {
+                int rangeToBeConvoluted = radius * width;
+
+                for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
                     count++;
-                    // TODO: Must check the time taken to process
                     try{
                         pixelVal = pixelsIn[k];
                     }catch (ArrayIndexOutOfBoundsException a){
-                        pixelVal = 1;
+                        pixelVal = 0;
                     }
 
                     int blue = pixelVal & 0xff;
@@ -87,13 +92,18 @@ public class SpeedyTiltShift {
         }
     }
     private static void performHorizontalConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, double[][] gaussianKernelVectors){
-        for(int i=top;i<bottom+width;i=i+width){
+        for(int i=top;i<bottom;i=i+width){
             int pixelRight = i + width - 1;
-
             double[] gaussianKernelVector = gaussianKernelVectors[i/width];
-            int radius = gaussianKernelVector.length/2;
 
-            for(int j = i; j< pixelRight; j++) {
+            if(gaussianKernelVector == null || gaussianKernelVector.length == 0){
+                if (pixelRight - i >= 0)
+                    System.arraycopy(pixelsIn, i, pixelsOut, i, pixelRight - i);
+                continue;
+            }
+
+            int radius = gaussianKernelVector.length/2;
+            for(int j = i; j < pixelRight; j++) {
                 float bluePixel = 0;
                 float greenPixel = 0;
                 float redPixel = 0;
@@ -104,7 +114,6 @@ public class SpeedyTiltShift {
                     int pixelIndex = j + k;
                     int vectorIndex = k + radius;
 
-                    // TODO: Must check the time taken to process
                     if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
                         pixelVal = pixelsIn[pixelIndex];
                     }else{
@@ -142,7 +151,6 @@ public class SpeedyTiltShift {
                 int rangeToBeConvoluted = radius * width;
                 for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
                     count++;
-                    // TODO: Must check the time taken to process
                     try{
                         pixelVal = pixelsIn[k];
                     }catch (ArrayIndexOutOfBoundsException a){
@@ -181,8 +189,6 @@ public class SpeedyTiltShift {
                 for(int k = -radius; k <= radius; k++) {
                     int pixelIndex = j + k;
                     int vectorIndex = k + radius;
-
-                    // TODO: Must check the time taken to process
                     if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
                         pixelVal = pixelsIn[pixelIndex];
                     }else{
@@ -214,11 +220,12 @@ public class SpeedyTiltShift {
             performVerticalConvolutionWithGivenSigma(top, pixelsIn, pixelsIntermediate, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
             performHorizontalConvolutionWithGivenSigma(top, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
         }else {
-            double[][] gaussianKernelVector = new double[height][];
+            double[][] gaussianKernelVector = new double[height+1][];
 
             int lowIndex = top/width;
             int highIndex = bottom/width;
-            for(int i=lowIndex;i<highIndex;i++){
+
+            for(int i=lowIndex;i<=highIndex;i++){
                 gaussianKernelVector[i] = constructGaussianKernel(calculateSigma(lowIndex,highIndex,i,sigma,isSigmaFar));
             }
 
@@ -234,30 +241,30 @@ public class SpeedyTiltShift {
         int imageHeight = input.getHeight();
         int totalPixels = input.getWidth()*input.getHeight();
 
+        /* Arrays to keep track of image pixels */
         int[] pixelsIn = new int[totalPixels];
         int[] pixelsIntermediate  = new int[totalPixels];
         int[] pixelsOut = new int[totalPixels];
 
-        System.out.println(a0+"  "+a1+"  "+a2+"   "+a3+" "+sigma_far+"  "+sigma_near);
 
+        logger.log(Level.INFO, String.format(" %s  %s  %s  %s  %s  %s",a0,a1,a2,a3, sigma_far,sigma_near));
         input.getPixels(pixelsIn,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
         performConvolution(0,(a0-1)*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, true);
-        System.out.println("**** Finished Processing First Part ****");
+        logger.log(Level.INFO,"**** Finished Processing far_sigma section ****");
 
         performConvolution(a0*imageWidth,a1*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, false);
-        System.out.println("**** Finished Processing Second Part ****");
+        logger.log(Level.INFO,"**** Finished Processing a0 - a1 section ****");
 
-        for(int i=(a1+1)*imageWidth; i<(a2-1)*imageWidth; i++){
-            pixelsOut[i] = pixelsIn[i];
-        }
-        System.out.println("**** Finished Processing Third Part ****");
+        if ((a2) * imageWidth - (a1) * imageWidth >= 0)
+            System.arraycopy(pixelsIn, (a1) * imageWidth, pixelsOut, (a1) * imageWidth, (a2) * imageWidth - (a1) * imageWidth);
+        logger.log(Level.INFO,"**** Finished Processing Focus section ****");
 
         performConvolution(a2*imageWidth,a3*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, false);
-        System.out.println("**** Finished PRocessing Fourth Part ****");
+        logger.log(Level.INFO,"**** Finished Processing a2 - a3 section ****");
 
-        performConvolution((a3+1)*imageWidth,imageHeight-2,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, true);
-        System.out.println("--------- Processing Done ------------");
+        performConvolution((a3+1)*imageWidth,imageHeight*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, true);
+        logger.log(Level.INFO,"**** Finished Processing near_sigma section ****");
 
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 

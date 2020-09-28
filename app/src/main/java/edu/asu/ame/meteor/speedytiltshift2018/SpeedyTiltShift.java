@@ -2,6 +2,12 @@ package edu.asu.ame.meteor.speedytiltshift2018;
 
 import android.graphics.Bitmap;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -56,7 +62,7 @@ public class SpeedyTiltShift {
 
                 double[] gaussianKernelVector = gaussianKernelVectors[j/width];
 
-                if(gaussianKernelVector == null || gaussianKernelVector.length == 0){
+                if(gaussianKernelVector.length == 0){
                     pixelsOut[j] = pixelsIn[j];
                     continue;
                 }
@@ -86,7 +92,6 @@ public class SpeedyTiltShift {
                 int combinedRed = (int) redPixel;
                 int combinedGreen = (int) greenPixel;
                 int combinedBlue = (int) bluePixel;
-
                 pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
             }
         }
@@ -96,14 +101,14 @@ public class SpeedyTiltShift {
             int pixelRight = i + width - 1;
             double[] gaussianKernelVector = gaussianKernelVectors[i/width];
 
-            if(gaussianKernelVector == null || gaussianKernelVector.length == 0){
+            if(gaussianKernelVector.length == 0){
                 if (pixelRight - i >= 0)
-                    System.arraycopy(pixelsIn, i, pixelsOut, i, pixelRight - i);
+                    System.arraycopy(pixelsIn, i, pixelsOut, i, pixelRight - i+1);
                 continue;
             }
 
             int radius = gaussianKernelVector.length/2;
-            for(int j = i; j < pixelRight; j++) {
+            for(int j = i; j <= pixelRight; j++) {
                 float bluePixel = 0;
                 float greenPixel = 0;
                 float redPixel = 0;
@@ -133,14 +138,13 @@ public class SpeedyTiltShift {
                 int combinedRed = (int) redPixel;
                 int combinedGreen = (int) greenPixel;
                 int combinedBlue = (int) bluePixel;
-
                 pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
             }
         }
     }
-    private static void performVerticalConvolutionWithGivenSigma(int top, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
+    private static void performVerticalConvolutionWithGivenSigma(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
         for (int i=top; i<top+width; i++){
-            for(int j = i; j < totalPixels; j=j+width) {
+            for(int j = i; j < bottom; j=j+width) {
                 float bluePixel = 0;
                 float greenPixel = 0;
                 float redPixel = 0;
@@ -176,8 +180,8 @@ public class SpeedyTiltShift {
             }
         }
     }
-    private static void performHorizontalConvolutionWithGivenSigma(int top, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
-        for(int i=top;i<totalPixels;i=i+width){
+    private static void performHorizontalConvolutionWithGivenSigma(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
+        for(int i=top;i<bottom;i=i+width){
             int pixelRight = i + width;
             for(int j = i; j < pixelRight; j++) {
                 float bluePixel = 0;
@@ -217,8 +221,12 @@ public class SpeedyTiltShift {
     private static void performConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsIntermediate, int[] pixelsOut, int height, int width, int totalPixels, float sigma, boolean isSigmaFar, boolean singleSigma){
         if(singleSigma){
             double[] gaussianKernelVector = constructGaussianKernel(sigma);
-            performVerticalConvolutionWithGivenSigma(top, pixelsIn, pixelsIntermediate, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
-            performHorizontalConvolutionWithGivenSigma(top, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
+            if(gaussianKernelVector.length == 0){
+                logger.log(Level.WARNING, "Gaussian Kernel Vector cannot be empty");
+                return;
+            }
+            performVerticalConvolutionWithGivenSigma(top, bottom, pixelsIn, pixelsIntermediate, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
+            performHorizontalConvolutionWithGivenSigma(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector.length/2,gaussianKernelVector);
         }else {
             double[][] gaussianKernelVector = new double[height+1][];
 
@@ -233,38 +241,90 @@ public class SpeedyTiltShift {
             performHorizontalConvolution(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector);
         }
     }
-    public static Bitmap tiltshift_java(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
+    public static Bitmap tiltshift_java(Bitmap input, final float sigma_far, final float sigma_near, final int a0, final int a1, final int a2, final int a3) throws InterruptedException {
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
 
         /* Image dimensions */
-        int imageWidth = input.getWidth();
-        int imageHeight = input.getHeight();
-        int totalPixels = input.getWidth()*input.getHeight();
+        final int imageWidth = input.getWidth();
+        final int imageHeight = input.getHeight();
+        final int totalPixels = input.getWidth()*input.getHeight();
 
         /* Arrays to keep track of image pixels */
-        int[] pixelsIn = new int[totalPixels];
-        int[] pixelsIntermediate  = new int[totalPixels];
-        int[] pixelsOut = new int[totalPixels];
+        final int[] pixelsIn = new int[totalPixels];
+        final int[] pixelsIntermediate  = new int[totalPixels];
+        final int[] pixelsOut = new int[totalPixels];
 
-
-        logger.log(Level.INFO, String.format(" %s  %s  %s  %s  %s  %s",a0,a1,a2,a3, sigma_far,sigma_near));
         input.getPixels(pixelsIn,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
-        performConvolution(0,(a0-1)*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, true);
-        logger.log(Level.INFO,"**** Finished Processing far_sigma section ****");
+        Callable<Void> farSigmaThread = new Callable<Void>()
+        {
+            @Override
+            public Void call() throws Exception
+            {
+                performConvolution(0,(a0)*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, true);
+                logger.log(Level.INFO, "farSigmaThread Completed Execution...");
+                return null;
+            }
+        };
 
-        performConvolution(a0*imageWidth,a1*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, false);
-        logger.log(Level.INFO,"**** Finished Processing a0 - a1 section ****");
+        Callable<Void> a0a1Thread = new Callable<Void>()
+        {
+            @Override
+            public Void call() throws Exception
+            {
+                performConvolution(a0*imageWidth,a1*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, false);
+                logger.log(Level.INFO, "a0a1Thread Completed Execution...");
+                return null;
+            }
+        };
 
-        if ((a2) * imageWidth - (a1) * imageWidth >= 0)
-            System.arraycopy(pixelsIn, (a1) * imageWidth, pixelsOut, (a1) * imageWidth, (a2) * imageWidth - (a1) * imageWidth);
-        logger.log(Level.INFO,"**** Finished Processing Focus section ****");
+        Callable<Void> noBlurThread = new Callable<Void>()
+        {
+            @Override
+            public Void call() throws Exception
+            {
 
-        performConvolution(a2*imageWidth,a3*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, false);
-        logger.log(Level.INFO,"**** Finished Processing a2 - a3 section ****");
+                if ((a2) * imageWidth - (a1) * imageWidth >= 0)
+                    System.arraycopy(pixelsIn, (a1) * imageWidth, pixelsOut, (a1) * imageWidth, (a2) * imageWidth - (a1) * imageWidth);
 
-        performConvolution((a3+1)*imageWidth,imageHeight*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, true);
-        logger.log(Level.INFO,"**** Finished Processing near_sigma section ****");
+                logger.log(Level.INFO, "noBlurThread Completed Execution...");
+                return null;
+            }
+        };
+
+        Callable<Void> a2a3Thread = new Callable<Void>()
+        {
+            @Override
+            public Void call() throws Exception
+            {
+                performConvolution(a2*imageWidth,a3*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, false);
+                logger.log(Level.INFO, "a2a3Thread Completed Execution...");
+                return null;
+            }
+        };
+
+        Callable<Void> nearSigmaThread = new Callable<Void>()
+        {
+            @Override
+            public Void call() throws Exception
+            {
+                performConvolution((a3)*imageWidth,imageHeight*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, true);
+                logger.log(Level.INFO, "nearSigmaThread Completed Execution...");
+                return null;
+            }
+        };
+
+
+        List<Callable<Void>> operationList = new ArrayList<>(Arrays.asList(farSigmaThread,a0a1Thread,noBlurThread, a2a3Thread,nearSigmaThread));
+
+        ExecutorService ex = Executors.newFixedThreadPool(5);
+
+        try{
+            ex.invokeAll(operationList);
+        }catch (InterruptedException e){
+            logger.log(Level.SEVERE, "Thread preempted. Failure!!!");
+            Thread.currentThread().interrupt();
+        }
 
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 

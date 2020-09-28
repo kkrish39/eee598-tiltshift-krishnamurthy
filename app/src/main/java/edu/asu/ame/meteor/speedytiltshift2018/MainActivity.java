@@ -29,7 +29,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
 
-    public void javaPress(View view){
+    public void javaPress(View view) throws InterruptedException {
         Bitmap outbmp = SpeedyTiltShift.tiltshift_java(bmp,s0f*sigma_range,s1f*sigma_range,(int)(a0f*bmp.getHeight()),(int)(a1f*bmp.getHeight()),(int)(a2f*bmp.getHeight()),(int)(a3f*bmp.getHeight()));
         imageView.setImageBitmap(outbmp);
     }
@@ -66,7 +66,11 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onClick(View view) {
-                javaPress(view);
+                try {
+                    javaPress(view);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         });
         cppbtn.setOnClickListener(new Button.OnClickListener(){

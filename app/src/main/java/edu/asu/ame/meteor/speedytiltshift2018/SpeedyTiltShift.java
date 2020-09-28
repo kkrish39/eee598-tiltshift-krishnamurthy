@@ -242,6 +242,7 @@ public class SpeedyTiltShift {
         }
     }
     public static Bitmap tiltshift_java(Bitmap input, final float sigma_far, final float sigma_near, final int a0, final int a1, final int a2, final int a3) throws InterruptedException {
+        long startTime = System.currentTimeMillis();
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
 
         /* Image dimensions */
@@ -256,6 +257,10 @@ public class SpeedyTiltShift {
 
         input.getPixels(pixelsIn,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
+        System.out.println(a0 +"  "+ a1+"  "+a2+"  "+a3);
+        System.out.println((float)a0/(float)imageHeight +"  "+ (float)a1/(float)imageHeight+"  "+(float)a2/(float)imageHeight+"  "+(float)a3/(float)imageHeight);
+        System.out.println(imageHeight + "  "+imageWidth);
+        System.out.println(sigma_far +"  "+sigma_near);
         Callable<Void> farSigmaThread = new Callable<Void>()
         {
             @Override
@@ -327,7 +332,9 @@ public class SpeedyTiltShift {
         }
 
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+        long difference = System.currentTimeMillis() - startTime;
 
+        logger.log(Level.INFO,"Execution Time - "+difference);
         return outBmp;
     }
     public static Bitmap tiltshift_cpp(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){

@@ -2,6 +2,9 @@ package edu.asu.ame.meteor.speedytiltshift2018;
 
 import android.graphics.Bitmap;
 
+import android.support.v7.app.AppCompatActivity;
+import android.os.Bundle;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -180,6 +183,7 @@ public class SpeedyTiltShift {
             }
         }
     }
+
     private static void performHorizontalConvolutionWithGivenSigma(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
         for(int i=top;i<bottom;i=i+width){
             int pixelRight = i + width;
@@ -337,6 +341,7 @@ public class SpeedyTiltShift {
         logger.log(Level.INFO,"Execution Time - "+difference);
         return outBmp;
     }
+    
     public static Bitmap tiltshift_cpp(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
         int[] pixels = new int[input.getHeight()*input.getWidth()];
@@ -346,8 +351,10 @@ public class SpeedyTiltShift {
         tiltshiftcppnative(pixels,pixelsOut,input.getWidth(),input.getHeight(),sigma_far,sigma_near,a0,a1,a2,a3);
 
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+
         return outBmp;
     }
+
     public static Bitmap tiltshift_neon(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
         int[] pixels = new int[input.getHeight()*input.getWidth()];
@@ -357,9 +364,9 @@ public class SpeedyTiltShift {
         tiltshiftneonnative(pixels,pixelsOut,input.getWidth(),input.getHeight(),sigma_far,sigma_near,a0,a1,a2,a3);
 
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
+
         return outBmp;
     }
-
 
     /**
      * A native method that is implemented by the 'native-lib' native library,

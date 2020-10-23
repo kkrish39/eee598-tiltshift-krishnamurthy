@@ -1,299 +1,11 @@
 #include <jni.h>
 #include <string>
-#include <math.h>
 #include <cpu-features.h>
 #include <android/log.h>
 #include <arm_neon.h>
-#include <iostream>
-#include <pthread.h>
-
+#include "speedy_tilt_shift_cpp.h"
+#include "speedy_tilt_shift_neon.h"
 #define NUM_THREADS 4
-
-struct threadArgs{
-    int top;
-    int bottom;
-    int *pixelsIn;
-    int *pixelsIntermediate;
-    int *pixelsOut;
-    int height;
-    int width;
-    int totalPixels;
-    float sigma;
-    bool isSigmaFar;
-    bool singleSigma;
-};
-
-double* constructGaussianKernel(double sigma){
-    if(sigma < 0.6)
-        return NULL;
-
-    double radius = ceil(2*sigma);
-
-    int kernelSize = (int)(ceil(radius)*2) + 1;
-    jdouble * kernelVector = new double[kernelSize] ;
-
-    int wholeRadius = (int)ceil(radius);
-    double sigmaSquare = sigma * sigma;
-    double twoPiSigmaSquare = 2 * M_PI * sigmaSquare;
-    double sqrtTwoPiSigmaSquare = sqrt(twoPiSigmaSquare);
-
-    double firstTerm = 1/(sqrtTwoPiSigmaSquare);
-
-    for(int k=-wholeRadius ;k<=wholeRadius;k++){
-        double secondTerm = -1* k*k/(2*sigmaSquare);
-        double weight = exp(secondTerm)*firstTerm;
-
-        kernelVector[k+wholeRadius] = weight;
-    }
-
-    return kernelVector;
-}
-
-
-double calculateSigma(int low, int high, int y, float sigma, bool isFarSigma){
-    return  (double) sigma * (isFarSigma ? (high - y) : (y - low))/(high - low);
-}
-
-static void performVerticalConvolutionWithGivenSigma(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, int totalPixels, int radius, double gaussianKernelVector[]){
-    for (int i=top; i<top+width; i++){
-        for(int j = i; j < bottom; j=j+width){
-            float bluePixel = 0;
-            float greenPixel = 0;
-            float redPixel = 0;
-
-            int count = -1;
-            int pixelVal;
-
-            int rangeToBeConvoluted = radius * width;
-            for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
-                count++;
-                if(k < totalPixels) {
-                    pixelVal = pixelsIn[k];
-                }else{
-                    pixelVal = 0;
-                }
-
-                int blue = pixelVal & 0xff;
-                int green = (pixelVal >> 8) & 0xff;
-                int red = (pixelVal >> 16) & 0xff;
-
-                redPixel += (gaussianKernelVector[count] * red );
-                greenPixel += (gaussianKernelVector[count] * green );
-                bluePixel += (gaussianKernelVector[count] * blue );
-            }
-
-            int combinedAlpha = 0xff;
-            int combinedRed = (int) redPixel;
-            int combinedGreen = (int) greenPixel;
-            int combinedBlue = (int) bluePixel;
-
-            pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
-        }
-    }
-}
-
-static void performHorizontalConvolutionWithGivenSigma(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, int totalPixels, int radius, double gaussianKernelVector[]){
-    for(int i=top;i<bottom;i=i+width){
-        int pixelRight = i + width;
-        for(int j = i; j < pixelRight; j++) {
-            float bluePixel = 0;
-            float greenPixel = 0;
-            float redPixel = 0;
-
-            int pixelVal;
-            for(int k = -radius; k <= radius; k++) {
-                int pixelIndex = j + k;
-                int vectorIndex = k + radius;
-                if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
-                    pixelVal = pixelsIn[pixelIndex];
-                }else{
-                    pixelVal = 0;
-                }
-
-                int blue = pixelVal & 0xff;
-                int green = (pixelVal >> 8) & 0xff;
-                int red = (pixelVal >> 16) & 0xff;
-
-                redPixel += (gaussianKernelVector[vectorIndex] * red);
-                greenPixel += (gaussianKernelVector[vectorIndex] * green);
-                bluePixel += (gaussianKernelVector[vectorIndex] * blue);
-            }
-
-            int combinedAlpha = 0xff;
-            int combinedRed = (int) redPixel;
-            int combinedGreen = (int) greenPixel;
-            int combinedBlue = (int) bluePixel;
-
-
-            pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
-        }
-    }
-}
-
-static void performVerticalConvolution(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, double sigma, bool isSigmaFar, int totalPixels){
-    int lowIndex = top/width;
-    int highIndex = bottom/width;
-    for (int i=top; i<=top+width; i++){
-        for(int j = i; j < bottom; j=j+width){
-            float bluePixel = 0;
-            float greenPixel = 0;
-            float redPixel = 0;
-
-            int count = -1;
-            int pixelVal;
-
-            double sigmaVal = calculateSigma(lowIndex,highIndex,j/width,sigma,isSigmaFar);
-
-            if(sigmaVal < 0.6){
-                pixelsOut[j] = pixelsIn[j];
-                continue;
-            }
-            double radiusVal = ceil(2*sigmaVal);
-
-            int kernelSize = (int)(ceil(radiusVal)*2) + 1;
-
-            double *gaussianKernelVector;
-            gaussianKernelVector = constructGaussianKernel(sigmaVal);
-
-
-            if(gaussianKernelVector == NULL){
-                pixelsOut[j] = pixelsIn[j];
-                continue;
-            }
-            int radius = kernelSize/2;
-            int rangeToBeConvoluted = radius * width;
-
-            for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
-                count++;
-                if(k < totalPixels){
-                    pixelVal = pixelsIn[k];
-                }else{
-                    pixelVal = 0;
-                }
-
-                int blue = pixelVal & 0xff;
-                int green = (pixelVal >> 8) & 0xff;
-                int red = (pixelVal >> 16) & 0xff;
-
-
-                redPixel += (gaussianKernelVector[count] * red );
-                greenPixel += (gaussianKernelVector[count] * green );
-                bluePixel += (gaussianKernelVector[count] * blue );
-
-            }
-
-            int combinedAlpha = 0xff;
-            int combinedRed = (int) redPixel;
-            int combinedGreen = (int) greenPixel;
-            int combinedBlue = (int) bluePixel;
-
-            pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
-        }
-    }
-}
-
-static void performHorizontalConvolution(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, double sigma, bool isSigmaFar, int totalPixels){
-    int lowIndex = top/width;
-    int highIndex = bottom/width;
-    for(int i=top;i<bottom;i=i+width){
-        int pixelRight = i + width - 1;
-        double sigmaVal = calculateSigma(lowIndex,highIndex,i/width,sigma,isSigmaFar);
-
-        if(sigmaVal < 0.6){
-            for(int x=i;x<=pixelRight-i+1;x++){
-                pixelsOut[x] = pixelsIn[x];
-            }
-            continue;
-        }
-
-        double radiusVal = ceil(2*sigmaVal);
-        int kernelSize = (int)(ceil(radiusVal)*2) + 1;
-        double *gaussianKernelVector;
-        gaussianKernelVector = constructGaussianKernel(sigmaVal);
-
-        int radius = kernelSize/2;
-//        __android_log_print(ANDROID_LOG_ERROR, "RADIUS ", "%d", radius);
-        for(int j = i; j <= pixelRight; j++) {
-            float bluePixel = 0;
-            float greenPixel = 0;
-            float redPixel = 0;
-
-            int pixelVal;
-
-            for(int k = -radius; k <= radius; k++) {
-                int pixelIndex = j + k;
-                int vectorIndex = k + radius;
-
-                if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
-                    pixelVal = pixelsIn[pixelIndex];
-                }else{
-                    pixelVal = 0;
-                }
-
-                int blue = pixelVal & 0xff;
-                int green = (pixelVal >> 8) & 0xff;
-                int red = (pixelVal >> 16) & 0xff;
-
-                redPixel += (gaussianKernelVector[vectorIndex] * red);
-                greenPixel += (gaussianKernelVector[vectorIndex] * green);
-                bluePixel += (gaussianKernelVector[vectorIndex] * blue);
-
-
-//                __android_log_print(ANDROID_LOG_ERROR, "PixelIndex", "%d", pixelIndex);
-//                __android_log_print(ANDROID_LOG_ERROR, "pixelRight", "%d", pixelRight);
-//                __android_log_print(ANDROID_LOG_ERROR, "Total", "%d", totalPixels);
-//                __android_log_print(ANDROID_LOG_ERROR, "P in", "%d", pixelIndex > 0 ? pixelsIn[pixelIndex] : 0);
-
-            }
-
-            int combinedAlpha = 0xff;
-            int combinedRed = (int) redPixel;
-            int combinedGreen = (int) greenPixel;
-            int combinedBlue = (int) bluePixel;
-            pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
-
-        }
-    }
-}
-
-void *performConvolution(void *threadarg){
-    struct threadArgs *args;
-    args = (struct threadArgs *) threadarg;
-
-    int top = args->top;
-    int bottom = args->bottom;
-    int *pixelsIn = args->pixelsIn;
-    int *pixelsIntermediate = args ->pixelsIntermediate;
-    int *pixelsOut  = args->pixelsOut;
-    int width = args ->width;
-    int totalPixels = args -> totalPixels;
-    float sigma = args ->sigma;
-    bool isSigmaFar = args->isSigmaFar;
-    bool singleSigma = args->singleSigma;
-
-    if(sigma <= 0){
-        for(int i=top;i<bottom;i++){
-            pixelsOut[i] = pixelsIn[i];
-        }
-        pthread_exit(NULL);
-    }
-
-    if(singleSigma){
-        double radius = ceil(2*sigma);
-        int kernelSize = (int)(ceil(radius)*2) + 1;
-        double *gaussianKernelVector = constructGaussianKernel(sigma);
-
-        if(kernelSize == 0){ pthread_exit(NULL);}
-
-        performVerticalConvolutionWithGivenSigma(top, bottom, pixelsIn, pixelsIntermediate, width, totalPixels, kernelSize/2, gaussianKernelVector);
-        performHorizontalConvolutionWithGivenSigma(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, kernelSize/2,gaussianKernelVector);
-    }else{
-        performVerticalConvolution(top, bottom, pixelsIn, pixelsIntermediate,width, sigma, isSigmaFar, totalPixels);
-        performHorizontalConvolution(top, bottom, pixelsIntermediate, pixelsOut, width, sigma, isSigmaFar, totalPixels);
-    }
-
-    pthread_exit(NULL);
-}
 
 extern "C"
 JNIEXPORT jint JNICALL
@@ -313,12 +25,12 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
 
     int totalPixels = width*height;
 
-    __android_log_print(ANDROID_LOG_ERROR, "a0", "%d", a0);
-    __android_log_print(ANDROID_LOG_ERROR, "a1", "%d", a1);
-    __android_log_print(ANDROID_LOG_ERROR, "a2", "%d", a2);
-    __android_log_print(ANDROID_LOG_ERROR, "a3", "%d", a3);
-    __android_log_print(ANDROID_LOG_ERROR, "sigma_far", "%f", sigma_far);
-    __android_log_print(ANDROID_LOG_ERROR, "sigma_near", "%f", sigma_near);
+    __android_log_print(ANDROID_LOG_DEBUG, "a0", "%d", a0);
+    __android_log_print(ANDROID_LOG_DEBUG, "a1", "%d", a1);
+    __android_log_print(ANDROID_LOG_DEBUG, "a2", "%d", a2);
+    __android_log_print(ANDROID_LOG_DEBUG, "a3", "%d", a3);
+    __android_log_print(ANDROID_LOG_DEBUG, "sigma_far", "%f", sigma_far);
+    __android_log_print(ANDROID_LOG_DEBUG, "sigma_near", "%f", sigma_near);
 
 
     pthread_t threads[NUM_THREADS];
@@ -329,7 +41,6 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
     th[0].pixelsIn = pixels;
     th[0].pixelsIntermediate = pixelsIntermediate;
     th[0].pixelsOut = outputPixels;
-    th[0].height = height;
     th[0].width = width;
     th[0].totalPixels = totalPixels;
     th[0].sigma = sigma_far;
@@ -341,7 +52,6 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
     th[1].pixelsIn = pixels;
     th[1].pixelsIntermediate = pixelsIntermediate;
     th[1].pixelsOut = outputPixels;
-    th[1].height = height;
     th[1].width = width;
     th[1].totalPixels = totalPixels;
     th[1].sigma = sigma_far;
@@ -353,7 +63,6 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
     th[2].pixelsIn = pixels;
     th[2].pixelsIntermediate = pixelsIntermediate;
     th[2].pixelsOut = outputPixels;
-    th[2].height = height;
     th[2].width = width;
     th[2].totalPixels = totalPixels;
     th[2].sigma = sigma_near;
@@ -365,7 +74,6 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
     th[3].pixelsIn = pixels;
     th[3].pixelsIntermediate = pixelsIntermediate;
     th[3].pixelsOut = outputPixels;
-    th[3].height = height;
     th[3].width = width;
     th[3].totalPixels = totalPixels;
     th[3].sigma = sigma_near;

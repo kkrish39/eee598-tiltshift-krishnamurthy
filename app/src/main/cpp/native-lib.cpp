@@ -3,22 +3,18 @@
 #include <cpu-features.h>
 #include <android/log.h>
 #include <arm_neon.h>
+#include <chrono>
 #include "speedy_tilt_shift_cpp.h"
 #include "speedy_tilt_shift_neon.h"
 #define NUM_THREADS 4
 
+using namespace std::chrono;
+
 extern "C"
 JNIEXPORT jint JNICALL
-Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(JNIEnv *env,
-                                                                               jobject instance,
-                                                                               jintArray inputPixels_,
-                                                                               jintArray outputPixels_,
-                                                                               jint width,
-                                                                               jint height,
-                                                                               jfloat sigma_far,
-                                                                               jfloat sigma_near,
-                                                                               jint a0, jint a1,
-                                                                               jint a2, jint a3) {
+Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(JNIEnv *env, jobject instance, jintArray inputPixels_, jintArray outputPixels_, jint width,
+        jint height, jfloat sigma_far, jfloat sigma_near, jint a0, jint a1, jint a2, jint a3) {
+
     jint *pixels = env->GetIntArrayElements(inputPixels_, NULL);
     jint *outputPixels = env->GetIntArrayElements(outputPixels_, NULL);
     jint *pixelsIntermediate = env->GetIntArrayElements(outputPixels_, NULL);
@@ -80,6 +76,7 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
     th[3].isSigmaFar = false;
     th[3].singleSigma = true;
 
+    auto start = high_resolution_clock::now();
     for(int i=0;i<NUM_THREADS;i++){
         pthread_create(&threads[i], NULL, performConvolution, (void *)&th[i]);
     }
@@ -91,6 +88,12 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
     for(int i=0;i<NUM_THREADS;i++){
         pthread_join(threads[i], NULL);
     }
+    auto stop = high_resolution_clock::now();
+
+    auto duration = duration_cast<microseconds>(stop - start);
+    __android_log_print(ANDROID_LOG_ERROR, "Execution time", "%lld", duration);
+
+
     env->ReleaseIntArrayElements(inputPixels_, pixels, 0);
     env->ReleaseIntArrayElements(outputPixels_, outputPixels, 0);
     return 0;
@@ -98,68 +101,78 @@ Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftcppnative(J
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftneonnative(JNIEnv *env,
-                                                                               jclass instance,
-                                                                               jintArray inputPixels_,
-                                                                               jintArray outputPixels_,
-                                                                               jint width,
-                                                                               jint height,
-                                                                               jfloat sigma_far,
-                                                                               jfloat sigma_near,
-                                                                               jint a0, jint a1,
-                                                                               jint a2, jint a3) {
+Java_edu_asu_ame_meteor_speedytiltshift2018_SpeedyTiltShift_tiltshiftneonnative(JNIEnv *env, jclass instance, jintArray inputPixels_, jintArray outputPixels_, jint width,
+        jint height, jfloat sigma_far, jfloat sigma_near, jint a0, jint a1,jint a2, jint a3) {
+
     jint *pixels = env->GetIntArrayElements(inputPixels_, NULL);
     jint *outputPixels = env->GetIntArrayElements(outputPixels_, NULL);
+    jint *pixelsIntermediate = env->GetIntArrayElements(outputPixels_, NULL);
 
-
-    __android_log_print(ANDROID_LOG_ERROR, "a0", "%d", a0);
-    __android_log_print(ANDROID_LOG_ERROR, "a1", "%d", a1);
-    __android_log_print(ANDROID_LOG_ERROR, "a2", "%d", a2);
-    __android_log_print(ANDROID_LOG_ERROR, "a3", "%d", a3);
-    __android_log_print(ANDROID_LOG_ERROR, "sigma_far", "%f", sigma_far);
-    __android_log_print(ANDROID_LOG_ERROR, "sigma_near", "%f", sigma_near);
+    __android_log_print(ANDROID_LOG_ERROR, "a0", "a0:%d  a1:%d  a2:%d   a3:%d   sigma_far:%f  sigma_near:%f", a0, a1, a2, a3, sigma_far, sigma_near);
 
     uint8_t * arrayInPtr = (uint8_t *)pixels;
     uint8_t * arrayOutPtr = (uint8_t *)outputPixels;
+    uint8_t * startInPtr = arrayInPtr;
+    uint8_t * startOutPtr = arrayOutPtr;
 
     int totalPixels  = width*height;
     int numIterations = totalPixels / 16;
     uint8x16x4_t pixelChannels;
 
+    for(int i=0;i< a0;i++){
 
-    sigma_far = 3.0f;
-    double radius = ceil(2*sigma_far);
-    int kernelSize = (int)(ceil(radius)*2) + 1;
-    double *gaussianKernelVector = constructGaussianKernel(sigma_far);
-
-    if(kernelSize > 0) {
-        for(int i=0;i<kernelSize;i++){
-            __android_log_print(ANDROID_LOG_ERROR, "GK", "%f", gaussianKernelVector[i]);
-        }
-
-        for (int i = 0; i < a0 * width; i++) {
-
-        }
     }
 
+    for(int i=a0;i<a1;i++){
+        float sigma = calculateSigmaNeon(a0,a1,i,sigma_far,true);
+        float radius = ceil(2*sigma);
+        int kernelSize = (int)(ceil(radius)*2) + 1;
+        float *gaussianKernelVector = constructGaussianKernelNeon(sigma);
 
-    for(int i=0;i<numIterations;i++){
+        for(int i=0;i<kernelSize;i++){
+//            __android_log_print(ANDROID_LOG_ERROR, "GK ---->>>>", "%d ------ %f ------ %f", kernelSize, sigma, gaussianKernelVector[i]);
+        }
+
+//        __android_log_print(ANDROID_LOG_ERROR, "GK ---->>>>", "%s", "$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+    }
+
+    performConvolutionNeon(0,a0*width,pixels,pixelsIntermediate,outputPixels,height,width,totalPixels,sigma_near,true, true);
+
+    for(int i=a3;i<height;i++){
+
+    }
+
+    int rangeVal = ((a2-a1)*width)/16;
+    arrayInPtr = startInPtr + (a1*width);
+    arrayOutPtr = startOutPtr + (a1*width);
+
+    /*Absolute copy from given image to the output*/
+    for(int i=0;i<rangeVal;i++){
         pixelChannels = vld4q_u8(arrayInPtr);
-        uint8x16_t b_vector = pixelChannels.val[0];
-        uint8x16_t g_vector = pixelChannels.val[1];
-        uint8x16_t r_vector = pixelChannels.val[2];
-        uint8x16_t a_vector = pixelChannels.val[3];
-
-        pixelChannels.val[0] = b_vector;
-        pixelChannels.val[1] = g_vector;
-        pixelChannels.val[2] = r_vector;
-        pixelChannels.val[3] = a_vector;
-
-
         vst4q_u8(arrayOutPtr,pixelChannels);
         arrayOutPtr = arrayOutPtr+64;
         arrayInPtr = arrayInPtr+64;
     }
+
+
+
+//    for(int i=0;i<numIterations;i++){
+//        pixelChannels = vld4q_u8(arrayInPtr);
+//        uint8x16_t b_vector = pixelChannels.val[0];
+//        uint8x16_t g_vector = pixelChannels.val[1];
+//        uint8x16_t r_vector = pixelChannels.val[2];
+//        uint8x16_t a_vector = pixelChannels.val[3];
+//
+//        pixelChannels.val[0] = b_vector;
+//        pixelChannels.val[1] = g_vector;
+//        pixelChannels.val[2] = r_vector;
+//        pixelChannels.val[3] = a_vector;
+//
+//
+//        vst4q_u8(arrayOutPtr,pixelChannels);
+//        arrayOutPtr = arrayOutPtr+64;
+//        arrayInPtr = arrayInPtr+64;
+//    }
 
 //    outputPixels = (jint *)(arrayOutPtr);
 

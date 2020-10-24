@@ -170,6 +170,7 @@ static void performVerticalConvolution(int top, int bottom, int *pixelsIn, int *
                 bluePixel += (gaussianKernelVector[count] * blue );
 
             }
+            delete [] gaussianKernelVector;
 
             int combinedAlpha = 0xff;
             int combinedRed = (int) redPixel;
@@ -227,7 +228,6 @@ static void performHorizontalConvolution(int top, int bottom, int *pixelsIn, int
                 greenPixel += (gaussianKernelVector[vectorIndex] * green);
                 bluePixel += (gaussianKernelVector[vectorIndex] * blue);
             }
-
             int combinedAlpha = 0xff;
             int combinedRed = (int) redPixel;
             int combinedGreen = (int) greenPixel;
@@ -235,6 +235,7 @@ static void performHorizontalConvolution(int top, int bottom, int *pixelsIn, int
             pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
 
         }
+        delete [] gaussianKernelVector;
     }
 }
 
@@ -267,6 +268,7 @@ void *performConvolution(void *threadarg){
 
         performVerticalConvolutionWithGivenSigma(top, bottom, pixelsIn, pixelsIntermediate, width, totalPixels, kernelSize/2, gaussianKernelVector);
         performHorizontalConvolutionWithGivenSigma(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, kernelSize/2,gaussianKernelVector);
+        delete [] gaussianKernelVector;
     }else{
         performVerticalConvolution(top, bottom, pixelsIn, pixelsIntermediate,width, sigma, isSigmaFar, totalPixels);
         performHorizontalConvolution(top, bottom, pixelsIntermediate, pixelsOut, width, sigma, isSigmaFar, totalPixels);

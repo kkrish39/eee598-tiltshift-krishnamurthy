@@ -2,19 +2,8 @@
 #include <pthread.h>
 #include <cmath>
 
-struct threadArgs{
-    int top;
-    int bottom;
-    int *pixelsIn;
-    int *pixelsIntermediate;
-    int *pixelsOut;
-    int width;
-    int totalPixels;
-    float sigma;
-    bool isSigmaFar;
-    bool singleSigma;
-};
 
+/*Function to construct the gaussian kernel with the given sigma value*/
 double* constructGaussianKernel(double sigma){
     if(sigma < 0.6)
         return NULL;
@@ -41,11 +30,14 @@ double* constructGaussianKernel(double sigma){
     return kernelVector;
 }
 
-
+/*Sigma Calculation function
+ * Based of whether the sigma region is far or near, the sigma values is calculated accordingly
+ * */
 double calculateSigma(int low, int high, int y, float sigma, bool isFarSigma){
     return  (double) sigma * (isFarSigma ? (high - y) : (y - low))/(high - low);
 }
 
+/*Function to perform vertical convolution with constant sigma for every row*/
 static void performVerticalConvolutionWithGivenSigma(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, int totalPixels, int radius, double gaussianKernelVector[]){
     for (int i=top; i<top+width; i++){
         for(int j = i; j < bottom; j=j+width){
@@ -84,6 +76,7 @@ static void performVerticalConvolutionWithGivenSigma(int top, int bottom, int *p
     }
 }
 
+/*Function to perform horizontal convolution with constant sigma for every row*/
 static void performHorizontalConvolutionWithGivenSigma(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, int totalPixels, int radius, double gaussianKernelVector[]){
     for(int i=top;i<bottom;i=i+width){
         int pixelRight = i + width;
@@ -121,7 +114,7 @@ static void performHorizontalConvolutionWithGivenSigma(int top, int bottom, int 
         }
     }
 }
-
+/*Function to perform vertical convolution with varying sigma for every row*/
 static void performVerticalConvolution(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, double sigma, bool isSigmaFar, int totalPixels){
     int lowIndex = top/width;
     int highIndex = bottom/width;
@@ -170,6 +163,7 @@ static void performVerticalConvolution(int top, int bottom, int *pixelsIn, int *
                 bluePixel += (gaussianKernelVector[count] * blue );
 
             }
+            /*de allocating the Gaussian kernel vector*/
             delete [] gaussianKernelVector;
 
             int combinedAlpha = 0xff;
@@ -181,7 +175,7 @@ static void performVerticalConvolution(int top, int bottom, int *pixelsIn, int *
         }
     }
 }
-
+/*Function to perform horizontal convolution with varying sigma for every row*/
 static void performHorizontalConvolution(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, double sigma, bool isSigmaFar, int totalPixels){
     int lowIndex = top/width;
     int highIndex = bottom/width;
@@ -235,10 +229,12 @@ static void performHorizontalConvolution(int top, int bottom, int *pixelsIn, int
             pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
 
         }
+        /*de allocating the Gaussian kernel vector*/
         delete [] gaussianKernelVector;
     }
 }
 
+/*Function to be called by the thread with the @struct threadArgs based on region of interest*/
 void *performConvolution(void *threadarg){
     struct threadArgs *args;
     args = (struct threadArgs *) threadarg;

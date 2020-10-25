@@ -3,6 +3,7 @@
 #include <cmath>
 #include <arm_neon.h>
 
+/*Construct gaussian kernel with the given Sigma Value*/
 float* constructGaussianKernelNeon(double sigma){
     if(sigma < 0.6)
         return NULL;
@@ -28,32 +29,42 @@ float* constructGaussianKernelNeon(double sigma){
     return kernelVector;
 }
 
-
+/*Calculate the sigma value based on the current row and the indexes*/
 float calculateSigmaNeon(int low, int high, int y, float sigma, bool isFarSigma){
-
     if(isFarSigma)
         return (sigma * (high-y) + 1.0f*(y-low)) / (high-low);
 
     return (1.0f * (high-y) + sigma * (y-low)) / (high-low);
 }
 
+
+/*
+ * px - pixels to be processed
+ * blur_val - the gaussian blur value that needs to be applied
+ * */
 uint32x4_t processPixel(int *px, float blur_val){
-    uint8_t *wp = (uint8_t *)px;
-    uint8x8_t t = vld1_u8(wp);
-    uint16x8_t tt = vmovl_u8(t);
+    uint8_t *eight_pxl_arr = (uint8_t *)px;
 
+    /*Reading the first 2 pixels without interleaving*/
+    uint8x8_t eight_pxl_vector = vld1_u8(eight_pxl_arr);
 
-    tt = vmulq_n_u16(tt,(uint16_t)(blur_val*64));
+    /*Scaling up the value from 8bit to 16bit vectors*/
+    uint16x8_t scaled_up_vector = vmovl_u8(eight_pxl_vector);
 
-    tt = vshrq_n_u16(tt,6);
+    /*Reading only the first pixel value*/
+    uint16x4_t low_scaled_up_vector = vget_low_u16(scaled_up_vector);
 
-    uint16x4_t ttt = vget_high_u16(tt);
+    /*Applying gaussian_blur with the given sigma value after scaling it up to a factor of 64*/
+    low_scaled_up_vector = vmul_n_u16(low_scaled_up_vector, (uint16_t)(blur_val*64));
 
-    uint32x4_t tttt = vmovl_u16(ttt);
+    /*Removing the scale value of 64 shifting right to 6 digits*/
+    low_scaled_up_vector = vshr_n_s16(low_scaled_up_vector,6);
 
-    return tttt;
+    /*scaling the 16bit value to 32 bit and return*/
+    return vmovl_u32(low_scaled_up_vector);
 }
 
+/*Function to perform vertical convolution with constant sigma for every row*/
 static void performVerticalConvolutionWithGivenSigmaNeon(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, int totalPixels, int radius, float gaussianKernelVector[]){
     for (int i=top; i<top+width; i++){
         for(int j = i; j < bottom; j=j+width){
@@ -66,20 +77,23 @@ static void performVerticalConvolutionWithGivenSigmaNeon(int top, int bottom, in
             int rangeToBeConvoluted = radius * width;
             for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
                 count++;
-                uint32x4_t q;
+                /*Store the processed Pixel*/
+                uint32x4_t processedPixel;
                 if(k < totalPixels) {
-                    q = processPixel(&pixelsIn[k],gaussianKernelVector[count]);
+                    processedPixel = processPixel(&pixelsIn[k],gaussianKernelVector[count]);
                 }else{
-                    q = vdupq_n_u32(0);
+                    processedPixel = vdupq_n_u32(0);
                 }
 
-                int RRR = vgetq_lane_u32(q, 2);
-                int GGG = vgetq_lane_u32(q, 1);
-                int BBB = vgetq_lane_u32(q, 0);
+                /*Getting each channel value of 32 bits from the specific lane*/
+                int redLane = vgetq_lane_u32(processedPixel, 2);
+                int greenLane = vgetq_lane_u32(processedPixel, 1);
+                int blueLane = vgetq_lane_u32(processedPixel, 0);
 
-                redPixel += (RRR & 0xff) << 16;
-                greenPixel += (GGG & 0xff) << 8;
-                bluePixel += (BBB & 0xff);
+                /*Aggregating the pixel values over the given gaussian kernel size*/
+                redPixel += (redLane & 0xff) << 16;
+                greenPixel += (greenLane & 0xff) << 8;
+                bluePixel += (blueLane & 0xff);
             }
 
             int combinedAlpha = 0xff;
@@ -87,12 +101,13 @@ static void performVerticalConvolutionWithGivenSigmaNeon(int top, int bottom, in
             int combinedGreen = (int) greenPixel;
             int combinedBlue = (int) bluePixel;
 
+            /*Re constructing the pixel with the new channel values*/
             pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
-//            __android_log_print(ANDROID_LOG_ERROR, "GK ---->>>>", "%d", pixelsOut[j]);
         }
     }
 }
 
+/*Function to perform horizontal convolution with constant sigma for every row*/
 static void performHorizontalConvolutionWithGivenSigmaNeon(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, int totalPixels, int radius, float gaussianKernelVector[]){
     for(int i=top;i<bottom;i=i+width){
         int pixelRight = i + width;
@@ -104,21 +119,20 @@ static void performHorizontalConvolutionWithGivenSigmaNeon(int top, int bottom, 
             for(int k = -radius; k <= radius; k++) {
                 int pixelIndex = j + k;
                 int vectorIndex = k + radius;
-                uint32x4_t q;
+                uint32x4_t processedPixel;
                 if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
-                    q = processPixel(&pixelsIn[pixelIndex],gaussianKernelVector[vectorIndex]);
+                    processedPixel = processPixel(&pixelsIn[pixelIndex],gaussianKernelVector[vectorIndex]);
                 }else{
-                    q = vdupq_n_u32(0);
+                    processedPixel = vdupq_n_u32(0);
                 }
 
-                int RRR = vgetq_lane_u32(q, 2);
-                int GGG = vgetq_lane_u32(q, 1);
-                int BBB = vgetq_lane_u32(q, 0);
+                int redLane = vgetq_lane_u32(processedPixel, 2);
+                int greenLane = vgetq_lane_u32(processedPixel, 1);
+                int blueLane = vgetq_lane_u32(processedPixel, 0);
 
-
-                redPixel += (RRR & 0xff) << 16;
-                greenPixel += (GGG & 0xff) << 8;
-                bluePixel += (BBB & 0xff);
+                redPixel += (redLane & 0xff) << 16;
+                greenPixel += (greenLane & 0xff) << 8;
+                bluePixel += (blueLane & 0xff);
             }
 
             int combinedAlpha = 0xff;
@@ -132,6 +146,7 @@ static void performHorizontalConvolutionWithGivenSigmaNeon(int top, int bottom, 
     }
 }
 
+/*Function to perform vertical convolution with varying sigma for every row*/
 static void performVerticalConvolutionNeon(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, double sigma, bool isSigmaFar, int totalPixels){
     int lowIndex = top/width;
     int highIndex = bottom/width;
@@ -142,7 +157,6 @@ static void performVerticalConvolutionNeon(int top, int bottom, int *pixelsIn, i
             float redPixel = 0;
 
             int count = -1;
-            int pixelVal;
 
             double sigmaVal = calculateSigma(lowIndex,highIndex,j/width,sigma,isSigmaFar);
             if(sigmaVal < 0.6){
@@ -164,22 +178,22 @@ static void performVerticalConvolutionNeon(int top, int bottom, int *pixelsIn, i
 
             for(int k = j - rangeToBeConvoluted; k <= j + rangeToBeConvoluted; k = k + width) {
                 count++;
-                if(k < totalPixels){
-                    pixelVal = pixelsIn[k];
+                uint32x4_t processedPixel;
+                if(k < totalPixels) {
+                    processedPixel = processPixel(&pixelsIn[k],gaussianKernelVector[count]);
                 }else{
-                    pixelVal = 0;
+                    processedPixel = vdupq_n_u32(0);
                 }
 
-                int blue = pixelVal & 0xff;
-                int green = (pixelVal >> 8) & 0xff;
-                int red = (pixelVal >> 16) & 0xff;
+                int redLane = vgetq_lane_u32(processedPixel, 2);
+                int greenLane = vgetq_lane_u32(processedPixel, 1);
+                int blueLane = vgetq_lane_u32(processedPixel, 0);
 
-
-                redPixel += (gaussianKernelVector[count] * red );
-                greenPixel += (gaussianKernelVector[count] * green );
-                bluePixel += (gaussianKernelVector[count] * blue );
-
+                redPixel += (redLane & 0xff);
+                greenPixel += (greenLane & 0xff) << 8;
+                bluePixel += (blueLane & 0xff)<< 16;
             }
+            delete [] gaussianKernelVector;
 
             int combinedAlpha = 0xff;
             int combinedRed = (int) redPixel;
@@ -191,6 +205,7 @@ static void performVerticalConvolutionNeon(int top, int bottom, int *pixelsIn, i
     }
 }
 
+/*Function to perform horizontal convolution with varying sigma for every row*/
 static void performHorizontalConvolutionNeon(int top, int bottom, int *pixelsIn, int *pixelsOut, int width, double sigma, bool isSigmaFar, int totalPixels){
     int lowIndex = top/width;
     int highIndex = bottom/width;
@@ -222,20 +237,20 @@ static void performHorizontalConvolutionNeon(int top, int bottom, int *pixelsIn,
             for(int k = -radius; k <= radius; k++) {
                 int pixelIndex = j + k;
                 int vectorIndex = k + radius;
-
+                uint32x4_t processedPixel;
                 if(pixelIndex >= 0 && pixelIndex < pixelRight && pixelIndex < totalPixels){
-                    pixelVal = pixelsIn[pixelIndex];
+                    processedPixel = processPixel(&pixelsIn[pixelIndex],gaussianKernelVector[vectorIndex]);
                 }else{
-                    pixelVal = 0;
+                    processedPixel = vdupq_n_u32(0);
                 }
 
-                int blue = pixelVal & 0xff;
-                int green = (pixelVal >> 8) & 0xff;
-                int red = (pixelVal >> 16) & 0xff;
+                int redLane = vgetq_lane_u32(processedPixel, 2);
+                int greenLane = vgetq_lane_u32(processedPixel, 1);
+                int blueLane = vgetq_lane_u32(processedPixel, 0);
 
-                redPixel += (gaussianKernelVector[vectorIndex] * red);
-                greenPixel += (gaussianKernelVector[vectorIndex] * green);
-                bluePixel += (gaussianKernelVector[vectorIndex] * blue);
+                redPixel += (redLane & 0xff) ;
+                greenPixel += (greenLane & 0xff) << 8;
+                bluePixel += (blueLane & 0xff)<< 16;
             }
 
             int combinedAlpha = 0xff;
@@ -243,18 +258,32 @@ static void performHorizontalConvolutionNeon(int top, int bottom, int *pixelsIn,
             int combinedGreen = (int) greenPixel;
             int combinedBlue = (int) bluePixel;
             pixelsOut[j] = (combinedAlpha & 0xff) << 24 | (combinedRed & 0xff) << 16 | (combinedGreen & 0xff) << 8 | (combinedBlue & 0xff);
-
         }
+        delete [] gaussianKernelVector;
     }
 }
 
-void performConvolutionNeon(int top, int bottom, int *pixelsIn, int *pixelsIntermediate, int *pixelsOut, int height, int width, int totalPixels, float sigma, bool isSigmaFar, bool singleSigma){
+/*Function to be called by the thread with the @struct threadArgs based on region of interest*/
+void *performConvolutionNeon(void *threadarg){
+    struct threadArgs *args;
+    args = (struct threadArgs *) threadarg;
+
+    int top = args->top;
+    int bottom = args->bottom;
+    int *pixelsIn = args->pixelsIn;
+    int *pixelsIntermediate = args ->pixelsIntermediate;
+    int *pixelsOut  = args->pixelsOut;
+    int width = args ->width;
+    int totalPixels = args -> totalPixels;
+    float sigma = args ->sigma;
+    bool isSigmaFar = args->isSigmaFar;
+    bool singleSigma = args->singleSigma;
 
     if(sigma <= 0){
         for(int i=top;i<bottom;i++){
             pixelsOut[i] = pixelsIn[i];
         }
-        return;
+        pthread_exit(NULL);
     }
 
     if(singleSigma){
@@ -263,10 +292,11 @@ void performConvolutionNeon(int top, int bottom, int *pixelsIn, int *pixelsInter
         float *gaussianKernelVector = constructGaussianKernelNeon(sigma);
 
         performVerticalConvolutionWithGivenSigmaNeon(top, bottom, pixelsIn, pixelsIntermediate, width, totalPixels, kernelSize/2, gaussianKernelVector);
-//        performHorizontalConvolutionWithGivenSigmaNeon(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, kernelSize/2,gaussianKernelVector);
+        performHorizontalConvolutionWithGivenSigmaNeon(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, kernelSize/2,gaussianKernelVector);
     }else{
         performVerticalConvolutionNeon(top, bottom, pixelsIn, pixelsIntermediate,width, sigma, isSigmaFar, totalPixels);
         performHorizontalConvolutionNeon(top, bottom, pixelsIntermediate, pixelsOut, width, sigma, isSigmaFar, totalPixels);
     }
 
+    pthread_exit(NULL);
 }

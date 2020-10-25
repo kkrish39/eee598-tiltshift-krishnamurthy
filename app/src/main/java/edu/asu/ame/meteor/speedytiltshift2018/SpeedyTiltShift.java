@@ -14,6 +14,11 @@ import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
+/*
+* @author Keerthivasan Krishnamurthy
+*
+* This class holds the logic to perform Gaussian blur algorithm in JAVA and acts as an entry point for NEON and C++ implementations
+* */
 public class SpeedyTiltShift {
     static SpeedyTiltShift Singleton = new SpeedyTiltShift();
 
@@ -24,6 +29,7 @@ public class SpeedyTiltShift {
     }
 
 
+    /*Method to construct the gaussian kernel with the given sigma value*/
     private static double[] constructGaussianKernel(double sigma){
         if(sigma < 0.6)
             return new double[0];
@@ -49,10 +55,12 @@ public class SpeedyTiltShift {
         return kernelVector;
     }
 
+    /*Method to calculate sigma*/
     private static double calculateSigma(int low, int high, int y, float sigma, boolean isFarSigma){
         return  sigma * (isFarSigma ? (high - y) : (y - low))/(high - low);
     }
 
+    /*Method to perform vertical convolution with varying sigma for every row*/
     private static void performVerticalConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, double[][] gaussianKernelVectors){
         for (int i=top; i<=top+width; i++){
             for(int j = i; j < bottom; j=j+width) {
@@ -99,6 +107,8 @@ public class SpeedyTiltShift {
             }
         }
     }
+
+    /*Method to perform horizontal convolution with varying sigma for every row*/
     private static void performHorizontalConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, double[][] gaussianKernelVectors){
         for(int i=top;i<bottom;i=i+width){
             int pixelRight = i + width - 1;
@@ -145,6 +155,8 @@ public class SpeedyTiltShift {
             }
         }
     }
+
+    /*Method to perform vertical convolution with constant sigma for every row*/
     private static void performVerticalConvolutionWithGivenSigma(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
         for (int i=top; i<top+width; i++){
             for(int j = i; j < bottom; j=j+width) {
@@ -184,6 +196,7 @@ public class SpeedyTiltShift {
         }
     }
 
+    /*Method to perform horizontal convolution with constant sigma for every row*/
     private static void performHorizontalConvolutionWithGivenSigma(int top, int bottom, int[] pixelsIn, int[] pixelsOut, int width, int totalPixels, int radius, double[] gaussianKernelVector){
         for(int i=top;i<bottom;i=i+width){
             int pixelRight = i + width;
@@ -207,6 +220,7 @@ public class SpeedyTiltShift {
                     int green = (pixelVal >> 8) & 0xff;
                     int red = (pixelVal >> 16) & 0xff;
 
+                    /*Gathering specific channels after processing with gaussian value*/
                     redPixel += (gaussianKernelVector[vectorIndex] * red);
                     greenPixel += (gaussianKernelVector[vectorIndex] * green);
                     bluePixel += (gaussianKernelVector[vectorIndex] * blue);
@@ -221,7 +235,10 @@ public class SpeedyTiltShift {
         }
     }
 
-
+    /*Classify and call the methods based on the region of choice
+    * @isSigmaFar - specify if it's far or near region
+    * @isSingleSigma - specify whether the given range must have varying or constant sigma values
+    * */
     private static void performConvolution(int top, int bottom, int[] pixelsIn, int[] pixelsIntermediate, int[] pixelsOut, int height, int width, int totalPixels, float sigma, boolean isSigmaFar, boolean singleSigma){
         if(singleSigma){
             double[] gaussianKernelVector = constructGaussianKernel(sigma);
@@ -237,6 +254,7 @@ public class SpeedyTiltShift {
             int lowIndex = top/width;
             int highIndex = bottom/width;
 
+            /*Pre calculating the gaussian vector for every row*/
             for(int i=lowIndex;i<=highIndex;i++){
                 gaussianKernelVector[i] = constructGaussianKernel(calculateSigma(lowIndex,highIndex,i,sigma,isSigmaFar));
             }
@@ -245,8 +263,9 @@ public class SpeedyTiltShift {
             performHorizontalConvolution(top, bottom, pixelsIntermediate, pixelsOut, width, totalPixels, gaussianKernelVector);
         }
     }
+
+    /*Entry method for Java Processing*/
     public static Bitmap tiltshift_java(Bitmap input, final float sigma_far, final float sigma_near, final int a0, final int a1, final int a2, final int a3) throws InterruptedException {
-        long startTime = System.currentTimeMillis();
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
 
         /* Image dimensions */
@@ -261,32 +280,29 @@ public class SpeedyTiltShift {
 
         input.getPixels(pixelsIn,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
 
-        System.out.println(a0 +"  "+ a1+"  "+a2+"  "+a3);
-        System.out.println((float)a0/(float)imageHeight +"  "+ (float)a1/(float)imageHeight+"  "+(float)a2/(float)imageHeight+"  "+(float)a3/(float)imageHeight);
-        System.out.println(imageHeight + "  "+imageWidth);
-        System.out.println(sigma_far +"  "+sigma_near);
+        /* 0-a0 section job */
         Callable<Void> farSigmaThread = new Callable<Void>()
         {
             @Override
             public Void call() throws Exception
             {
                 performConvolution(0,(a0)*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, true);
-                logger.log(Level.INFO, "farSigmaThread Completed Execution...");
                 return null;
             }
         };
 
+        /* a0-a1 section job*/
         Callable<Void> a0a1Thread = new Callable<Void>()
         {
             @Override
             public Void call() throws Exception
             {
                 performConvolution(a0*imageWidth,a1*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_far,true, false);
-                logger.log(Level.INFO, "a0a1Thread Completed Execution...");
                 return null;
             }
         };
 
+        /* a1-a2 section job*/
         Callable<Void> noBlurThread = new Callable<Void>()
         {
             @Override
@@ -296,29 +312,28 @@ public class SpeedyTiltShift {
                 if ((a2) * imageWidth - (a1) * imageWidth >= 0)
                     System.arraycopy(pixelsIn, (a1) * imageWidth, pixelsOut, (a1) * imageWidth, (a2) * imageWidth - (a1) * imageWidth);
 
-                logger.log(Level.INFO, "noBlurThread Completed Execution...");
                 return null;
             }
         };
 
+        /* a2-a3 section job*/
         Callable<Void> a2a3Thread = new Callable<Void>()
         {
             @Override
             public Void call() throws Exception
             {
                 performConvolution(a2*imageWidth,a3*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, false);
-                logger.log(Level.INFO, "a2a3Thread Completed Execution...");
                 return null;
             }
         };
 
+        /* a3-totalPixels section job*/
         Callable<Void> nearSigmaThread = new Callable<Void>()
         {
             @Override
             public Void call() throws Exception
             {
                 performConvolution((a3)*imageWidth,imageHeight*imageWidth,pixelsIn,pixelsIntermediate,pixelsOut,imageHeight,imageWidth,totalPixels,sigma_near,false, true);
-                logger.log(Level.INFO, "nearSigmaThread Completed Execution...");
                 return null;
             }
         };
@@ -326,8 +341,11 @@ public class SpeedyTiltShift {
 
         List<Callable<Void>> operationList = new ArrayList<>(Arrays.asList(farSigmaThread,a0a1Thread,noBlurThread, a2a3Thread,nearSigmaThread));
 
+        /*fixing a thread size of 5*/
         ExecutorService ex = Executors.newFixedThreadPool(5);
 
+        long startTime = System.currentTimeMillis();
+        /*Invoke all threads*/
         try{
             ex.invokeAll(operationList);
         }catch (InterruptedException e){
@@ -338,10 +356,11 @@ public class SpeedyTiltShift {
         outBmp.setPixels(pixelsOut,0,input.getWidth(),0,0,input.getWidth(),input.getHeight());
         long difference = System.currentTimeMillis() - startTime;
 
-        logger.log(Level.INFO,"Execution Time - "+difference);
+        logger.log(Level.INFO,"Execution Time Java- "+difference);
         return outBmp;
     }
-    
+
+    /*Entry method for CPP Processing*/
     public static Bitmap tiltshift_cpp(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
         int[] pixels = new int[input.getHeight()*input.getWidth()];
@@ -355,6 +374,7 @@ public class SpeedyTiltShift {
         return outBmp;
     }
 
+    /*Entry method for Neon Processing*/
     public static Bitmap tiltshift_neon(Bitmap input, float sigma_far, float sigma_near, int a0, int a1, int a2, int a3){
         Bitmap outBmp = Bitmap.createBitmap(input.getWidth(), input.getHeight(), Bitmap.Config.ARGB_8888);
         int[] pixels = new int[input.getHeight()*input.getWidth()];
